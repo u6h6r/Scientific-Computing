@@ -10,6 +10,7 @@
 #include <atomic>
 
 std::atomic<int> g_sorted;
+const int g_array_size = 100000;
 
 template< typename T > 
 class FixedQueue: public std::queue< T > 
@@ -56,23 +57,27 @@ public:
 class Producer
 {
     public:
-        Producer(FixedQueue< std::array<int, 100000> > & fixque, int arrays_num)
+        // https://stackoverflow.com/questions/19661347/passing-template-class-as-parameter
+        template<class T>
+        Producer(FixedQueue<T> & fixque, int arrays_num)
         {
             // std::cout << "Num of arrays to produce is: " << arrays_num << "\n";
-            // std::array<int, 100000> ar5;
-            // std::array<int, 100000> ar6;
+            // std::array<int, g_array_size> ar5;
+            // std::array<int, g_array_size> ar6;
             // fixque.push(ar5);
             // std::cout << "Size z class Producer: " <<fixque.size() << "\n";
             // fixque.push(ar6);
             // std::cout << "Queue is not empty: " << !fixque.empty() << "\n";
             // fill_array();
-            // std::vector<std::array<int, 100000>> v_of_a;
+            // std::vector<std::array<int, g_array_size>> v_of_a;
             // v_of_a.reserve(arrays_num);
             for(int i=0; i<arrays_num; i++)
             {
                 std::cout << "Producer is producing array num: " << i+1 << "\n";
-                std::array<int, 100000> ar;
+                std::array<int, g_array_size> ar;
                 fill_array(ar.begin(), ar.end());
+                int sum = std::accumulate(ar.begin(), ar.end(), 0);
+                std::cout << "SUM from checksum PRODUCER: " << sum << "\n";
                 // if(i == 0)
                 // {
                 // for (auto num: ar) 
@@ -101,14 +106,15 @@ class Producer
 class Consumer
 {
     public:
-        Consumer(FixedQueue< std::array<int, 100000> > & fixque)
+        template<class T> 
+        Consumer(FixedQueue< T > & fixque)
         {
             std::cout << "Queue size(class Consumer): " <<fixque.size() << "\n";
             while(!fixque.empty())
             {
-                // if(current == 2)
+                // if(current == 0)
                 // {
-                //     std::array<int, 100000> & arr = fixque.front();
+                //     std::array<int, g_array_size> & arr = fixque.front();
                 //     fixque.pop();
                 //     std::sort(arr.begin(), arr.end());
                 //     for (auto num: arr) 
@@ -120,38 +126,37 @@ class Consumer
                 // }
                 std::cout << "Now sorting array num: " << current << "\n";
                 std::cout << "Queue size(class Consumer) before pop: " <<fixque.size() << "\n";
-                std::array<int, 100000> & arr = fixque.front();
+                std::array<int, g_array_size> & arr = fixque.front();
                 fixque.pop();
-                sum = check_sum(arr);
+                int sum = check_sum(arr);
                 std::cout << "Sum of elements of an array is: " << sum << "\n";
                 std::cout << "Queue size(class Consumer) after pop: " <<fixque.size() << "\n";
                 std::sort(arr.begin(), arr.end());
-                sum = 0;
                 ++current;
                 ++g_sorted;
             }
             std::cout << "Queue size(class Consumer): " <<fixque.size() << "\n";
             std::cout << "Consumer has sorted " << current+1 << " num of arrays\n";
         }
-        int check_sum(std::array<int, 100000> & arr)
+        int check_sum(std::array<int, g_array_size> & arr)
         {
             int sum = std::accumulate(arr.begin(), arr.end(), 0);
+            std::cout << "SUM from checksum: " << sum << "\n";
             return sum;
         }
     private:
-        int sum = 0;
         int current = 0;
 };
 
 int main()
 {
-    FixedQueue< std::array<int, 100000> > fque(3);
+    FixedQueue< std::array<int, g_array_size> > fque(3);
     // Producer prod(fque);
 
-    std::array<int, 100000> ar1;
-    std::array<int, 100000> ar2;
-    std::array<int, 100000> ar3;
-    std::array<int, 100000> ar4;
+    std::array<int, g_array_size> ar1;
+    // std::array<int, g_array_size> ar2;
+    // std::array<int, g_array_size> ar3;
+    // std::array<int, g_array_size> ar4;
 
     fque.getMaxSize();
     fque.push(ar1);
@@ -159,7 +164,7 @@ int main()
     std::cout << fque.size() << "\n";
     Producer prod(fque, 4);
     Consumer cons(fque);
-    std::cout << "Consumer has sorted (atomic) " << g_sorted+1 << " num of arrays\n";
+    // std::cout << "Consumer has sorted (atomic) " << g_sorted+1 << " num of arrays\n";
     // fque.push(ar4);
     // fque.pop();
     // fque.pop();
