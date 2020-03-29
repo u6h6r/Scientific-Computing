@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <vector>
 #include <atomic>
+#include <mutex>
+#include <condition_variable> 
+// https://stackoverflow.com/questions/9015748/whats-the-difference-between-notify-all-and-notify-one-of-stdcondition-va
 
 std::atomic<int> g_sorted;
 const int g_array_size = 100000;
@@ -31,7 +34,7 @@ public:
         std::cout << "Max size is: " << max_size << "\n";
     }
 
-    void push( T value )
+    void push( T data )
     {   
         if (is_full()) 
         {
@@ -39,7 +42,7 @@ public:
         }   
         else 
         {
-            std::queue< T >::push( value );
+            std::queue< T >::push( data );
             ++current;
         }
     }
@@ -61,23 +64,19 @@ class Producer
         template<class T>
         Producer(FixedQueue<T> & fixque, int arrays_num)
         {
-            // std::cout << "Num of arrays to produce is: " << arrays_num << "\n";
-            // std::array<int, g_array_size> ar5;
-            // std::array<int, g_array_size> ar6;
-            // fixque.push(ar5);
-            // std::cout << "Size z class Producer: " <<fixque.size() << "\n";
-            // fixque.push(ar6);
-            // std::cout << "Queue is not empty: " << !fixque.empty() << "\n";
-            // fill_array();
-            // std::vector<std::array<int, g_array_size>> v_of_a;
-            // v_of_a.reserve(arrays_num);
+            produce(fixque, arrays_num);
+        }
+
+        template<class T>
+        void produce(FixedQueue<T> & fixque, int arrays_num)
+        {
             for(int i=0; i<arrays_num; i++)
             {
-                std::cout << "Producer is producing array num: " << i+1 << "\n";
+                std::cout << "Producer is producing array num: PRODUCER " << i+1 << "\n";
                 std::array<int, g_array_size> ar;
                 fill_array(ar.begin(), ar.end());
                 int sum = std::accumulate(ar.begin(), ar.end(), 0);
-                std::cout << "SUM from checksum PRODUCER: " << sum << "\n";
+                // std::cout << "SUM from checksum PRODUCER: " << sum << "\n";
                 // if(i == 0)
                 // {
                 // for (auto num: ar) 
@@ -88,10 +87,10 @@ class Producer
                 // }
                 // v_of_a.emplace_back(ar);
                 fixque.push(ar);
-                std::cout << "Queue size(class Producer): " <<fixque.size() << "\n";
+                // std::cout << "Queue size(class Producer): " <<fixque.size() << "\n";
             }
-
         }
+
         // https://stackoverflow.com/questions/972152/how-to-create-a-template-function-within-a-class-c
         template < typename iterator >
         void fill_array( iterator start, iterator end)
@@ -112,39 +111,36 @@ class Consumer
             std::cout << "Queue size(class Consumer): " <<fixque.size() << "\n";
             while(!fixque.empty())
             {
-                // if(current == 0)
-                // {
-                //     std::array<int, g_array_size> & arr = fixque.front();
-                //     fixque.pop();
-                //     std::sort(arr.begin(), arr.end());
-                //     for (auto num: arr) 
-                //     {
-                //         std::cout << num << ", ";
-                //     }
-                //     std::cout << "\n";
-                //     ++current;
-                // }
-                std::cout << "Now sorting array num: " << current << "\n";
-                std::cout << "Queue size(class Consumer) before pop: " <<fixque.size() << "\n";
-                std::array<int, g_array_size> & arr = fixque.front();
-                fixque.pop();
-                int sum = check_sum(arr);
-                std::cout << "Sum of elements of an array is: " << sum << "\n";
-                std::cout << "Queue size(class Consumer) after pop: " <<fixque.size() << "\n";
-                std::sort(arr.begin(), arr.end());
-                ++current;
-                ++g_sorted;
+                consume(fixque);
             }
             std::cout << "Queue size(class Consumer): " <<fixque.size() << "\n";
-            std::cout << "Consumer has sorted " << current+1 << " num of arrays\n";
+            std::cout << "Consumer has sorted " << current << " num of arrays\n";
         }
+
+        template<class T>
+        void consume(FixedQueue< T > & fixque)
+        {
+            std::cout << "Now sorting array num: CONSUMIG " << current << "\n";
+            std::cout << "Queue size(class Consumer) before pop: " <<fixque.size() << "\n";
+            std::array<int, g_array_size> arr(fixque.front());
+            fixque.pop();
+            int sum = check_sum(arr);
+            std::cout << "Sum of elements of an array is: " << sum << "\n";
+            std::cout << "Queue size(class Consumer) after pop: " <<fixque.size() << "\n";
+            std::sort(arr.begin(), arr.end());
+            ++current;
+            ++g_sorted;
+        }
+
         int check_sum(std::array<int, g_array_size> & arr)
         {
             int sum = std::accumulate(arr.begin(), arr.end(), 0);
-            std::cout << "SUM from checksum: " << sum << "\n";
+            // std::cout << "SUM from checksum: " << sum << "\n";
             return sum;
         }
+
     private:
+        int sum = 0;
         int current = 0;
 };
 
@@ -153,13 +149,13 @@ int main()
     FixedQueue< std::array<int, g_array_size> > fque(3);
     // Producer prod(fque);
 
-    std::array<int, g_array_size> ar1;
+    // std::array<int, g_array_size> ar1;
     // std::array<int, g_array_size> ar2;
     // std::array<int, g_array_size> ar3;
     // std::array<int, g_array_size> ar4;
 
     fque.getMaxSize();
-    fque.push(ar1);
+    // fque.push(ar1);
     // fque.push(ar2);
     std::cout << fque.size() << "\n";
     Producer prod(fque, 4);
