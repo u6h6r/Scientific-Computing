@@ -1,6 +1,7 @@
 #include <iostream>
 #include <queue>
 #include <typeinfo>
+#include <functional>
 #include <array>
 #include <chrono>
 #include <random>
@@ -12,251 +13,235 @@
 #include <mutex>
 #include <condition_variable> 
 // https://stackoverflow.com/questions/9015748/whats-the-difference-between-notify-all-and-notify-one-of-stdcondition-va
+#include <chrono>
 
-std::atomic<int> g_sorted;
+typedef std::chrono::high_resolution_clock Clock;
 const int g_array_size = 100000;
+// std::atomic<bool> done {false};
+static int arrays_to_produce = 1000;
+// bool queue_empty {false};
+// bool job_done {false};
+std::atomic<int> sorted_num {0};
+
+std::condition_variable cv_need_item;
+std::condition_variable cv_has_item;
+std::mutex mutex_consumer;
+// std::mutex mutex_finish;
 
 template< typename T > 
 class FixedQueue: public std::queue< T > 
-{ 
+{
 private:
-    std::condition_variable cv;
-    std::mutex m;
-    inline bool is_full() 
-    {
-        return !( a_current < max_size );
-    }   
+    // std::condition_variable cv_need_item;
+    // std::condition_variable cv_has_item;
+    // std::condition_variable cv;
+    // std::mutex m_empty;
+    // std::mutex m_full;
 
+    mutable std::mutex m;
     const int max_size;
-    // int current = 0;
-    std::atomic<int> a_current {0};
+    std::queue< T > fix_queue;
+    // std::atomic<int> current {0};
+    // bool queue_full {false};
 
 public:
-    FixedQueue(int sajz) : max_size(sajz){} 
-    void getMaxSize() 
-    { 
-        std::cout << "Max size is: " << max_size << "\n";
+    FixedQueue(int sajz) : max_size(sajz){}
+    // void getMaxSize() 
+    // { 
+    //     std::cout << "Max size is: " << max_size << "\n";
+    // }
+    bool empty() const
+    {
+        // std::unique_lock<std::mutex> lock(m);
+        std::unique_lock<std::mutex> lock(m);
+        std::cout << "PUSTA\n";
+        // queue_empty = std::queue< T >::empty();
+        return fix_queue.empty();
     }
 
-    // void push( T data )
-    // {   
-    //     if (is_full()) 
-    //     {
-    //         std::cout << "Queue full" << std::endl;
-    //     }   
-    //     else 
-    //     {
-    //         std::queue< T >::push( data );
-    //         ++current;
-    //     }
-    // }
-    // void pop() 
-    // {   
-    //     if (!std::queue< T >::empty()) 
-    //     {
-    //         std::queue< T >::pop();
-    //         --current;
-    //     }   
-    // }
-
-    void push(T const& data)
+    void wait_and_push(T const& data)
     {
- 
         std::unique_lock<std::mutex> lock(m);
-        bool const was_empty=std::queue< T >::empty();
-        std::queue< T >::push(data);
-        ++a_current;
-        std::cout << "Queue is empty: " << was_empty << "\n";
-        std::cout << "Queue is full: " << is_full() << "\n";
-        lock.unlock(); // unlock the mutex
-
-        if(was_empty)
+        while(fix_queue.size() == max_size)
         {
-            cv.notify_one();
+            // std::this_thread::yield();
+            // std::cout << "Queue is full... wiating\n";
+            cv_need_item.wait(lock);
+        }
+        // cv_need_item.wait(lock, [&]{(fix_queue.size() == max_size);});
+        fix_queue.push(data);
+        lock.unlock();
+        cv_has_item.notify_one();
+    }
+
+    bool try_pop(T & popped_value)
+    {
+        std::lock_guard<std::mutex> lock(m);
+        if(fix_queue.empty())
+        {
+            return false;
+        }
+        
+        popped_value=fix_queue.front();
+        fix_queue.pop();
+        cv_need_item.notify_one();
+        return true;
+    }
+
+    void wait_and_pop(T & popped_value)
+    {
+        if (!(arrays_to_produce == sorted_num))
+        {
+        std::unique_lock<std::mutex> lock(m);
+        while(fix_queue.empty())
+        {
+            // if (arrays_to_produce == sorted_num)
+            // {
+            //     cv_has_item.notify_all();
+            //     return;
+            // }
+            // std::this_thread::yield();
+            cv_has_item.wait(lock);
+        }
+        // cv_has_item.wait(lock, [&]{fix_queue.empty();});
+        popped_value=fix_queue.front();
+        fix_queue.pop();
+        lock.unlock();
+        cv_need_item.notify_one();
         }
 
     }
-
-    void wait_and_pop(T& popped_data)
-    {
-        std::unique_lock<std::mutex> lock(m);
-        while(std::queue< T >::empty())
-        {
-            cv.wait(lock);
-        }
-        std::cout << "DATA POPPED FORM QUEUE\n";
-        popped_data=std::queue< T >::front();
-        std::queue< T >::pop();
-        --a_current;
-    }
-
+    
 };
 
 template<class T>
 class Producer
 {
+private:
     FixedQueue< T > & fixque;
     int arrays_num;
-    public:
-        // https://stackoverflow.com/questions/19661347/passing-template-class-as-parameter
-        // template<class T>
-        Producer(FixedQueue< T > & _fixque, int _arrays_num) : fixque(_fixque), arrays_num(_arrays_num) {};
-        // {
-        //     produce(fixque, arrays_num);
-        // }
 
-        // template<class T>
-        void run()
+public:
+    // https://stackoverflow.com/questions/19661347/passing-template-class-as-parameter
+    Producer(FixedQueue< T > & _fixque, int _arrays_num) : fixque(_fixque), arrays_num(_arrays_num) {};
+    void run()
+    {
+        produce(fixque, arrays_num);
+    }
+    void produce(FixedQueue<T> & fixque, int arrays_num)
+    {
+        for(int i=0; i<arrays_num; i++)
         {
-            produce(fixque, arrays_num);
-        }
-        void produce(FixedQueue<T> & fixque, int arrays_num)
-        {
-            for(int i=0; i<arrays_num; i++)
-            {
-                std::cout << "Producer is producing array num: PRODUCER " << i+1 << "\n";
-                std::array<int, g_array_size> ar;
-                fill_array(ar.begin(), ar.end());
-                int sum = std::accumulate(ar.begin(), ar.end(), 0);
-                // std::cout << "SUM from checksum PRODUCER: " << sum << "\n";
-                // if(i == 0)
-                // {
-                // for (auto num: ar) 
-                // {
-                //     std::cout << num << ", ";
-                // }
-                // std::cout << "\n";
-                // }
-                // v_of_a.emplace_back(ar);
-                fixque.push(ar);
-                // std::cout << "Queue size(class Producer): " <<fixque.size() << "\n";
-            }
-        }
+            std::cout << "Producer is producing array num: PRODUCER " << i+1 << "\n";
+            std::array<int, g_array_size> ar;
+            fill_array(ar.begin(), ar.end());
+            // int sum = std::accumulate(ar.begin(), ar.end(), 0);
 
-        // https://stackoverflow.com/questions/972152/how-to-create-a-template-function-within-a-class-c
-        template < typename iterator >
-        void fill_array( iterator start, iterator end)
-        {
-            static std::random_device rd;
-            static std::mt19937 generator(rd());
-            static std::uniform_int_distribution<int> rand(0,10000);
-            std::generate(start, end, [&] () {return rand(generator);});
+            fixque.wait_and_push(ar);
+
+            // std::cout << "Queue size(class Producer): " <<fixque.size() << "\n";
         }
+    }
+    // https://stackoverflow.com/questions/972152/how-to-create-a-template-function-within-a-class-c
+    template < typename iterator >
+    void fill_array( iterator start, iterator end)
+    {
+        static std::random_device rd;
+        static std::mt19937 generator(rd());
+        static std::uniform_int_distribution<int> rand(0,10000);
+        std::generate(start, end, [&] () {return rand(generator);});
+    }
+
 };
-
 
 
 template<class T>
 class Consumer
 {   
+private:
+    int sum = 0;
+    int sorted_arrays = 0;
     FixedQueue< T > & fixque;
-    public:
-        // template<class T> 
-        Consumer(FixedQueue< T > & _fixque) : fixque(_fixque) {};
-        // {
+public:
+    Consumer(FixedQueue< T > & _fixque) : fixque(_fixque) {};
 
-        //     std::array<int, g_array_size> arr;
-        //     fixque.wait_and_pop(arr);
-        //     consume(arr);
-        //     // int sum = check_sum(arr);
-        //     // std::cout << "Sum of elements of an array is: " << sum << "\n";
-        //     // std::cout << "Queue size(class Consumer): " <<fixque.size() << "\n";
-        //     // while(!fixque.empty())
-        //     // {
-        //     //     consume(fixque);
-        //     // }
-        //     // std::cout << "Queue size(class Consumer): " <<fixque.size() << "\n";
-        //     // std::cout << "Consumer has sorted " << current << " num of arrays\n";
-        // }
-        void run()
+    void run()
+    {
+        while(!(arrays_to_produce == sorted_num))
         {
+            std::lock_guard<std::mutex> lock(mutex_consumer);
             std::array<int, g_array_size> arr;
-            fixque.wait_and_pop(arr);
-            // std::cout << "Consumer_id: " << str << " is consuming\n";
-            consume(arr);
+            if(!fixque.try_pop(arr))
+            {   
+                // std::this_thread::yield();
+                // std::cout<< "Try nie dal rady PUSH \n";
+                fixque.wait_and_pop(arr);
+            }
+            // consume(arr);
+            if(sorted_num < arrays_to_produce)
+                consume(arr);
         }
-        // template<class T> 
-        void consume(T & data)
+        std::lock_guard<std::mutex> lock(mutex_consumer);
+        if (arrays_to_produce == sorted_num)
         {
-            int sum = check_sum(data);
-            std::cout << "(CONSUME)Sum of elements of an array is: " << sum << "\n";
-            std::sort(data.begin(), data.end());
-            ++g_sorted;
+            std::cout << "Thread id " << std::this_thread::get_id() << " Consumer has sorted: " << sorted_arrays << "\n";
+            cv_has_item.notify_all();
         }
 
-        // template<class T>
-        // void consume(FixedQueue< T > & fixque)
-        // {
-        //     std::cout << "Now sorting array num: CONSUMIG " << current << "\n";
-        //     std::cout << "Queue size(class Consumer) before pop: " <<fixque.size() << "\n";
-        //     std::array<int, g_array_size> arr(fixque.front());
-        //     fixque.pop();
-        //     int sum = check_sum(arr);
-        //     std::cout << "Sum of elements of an array is: " << sum << "\n";
-        //     std::cout << "Queue size(class Consumer) after pop: " <<fixque.size() << "\n";
-        //     std::sort(arr.begin(), arr.end());
-        //     ++current;
-        //     ++g_sorted;
-        // }
-
-        int check_sum(std::array<int, g_array_size> & arr)
-        {
-            int sum = std::accumulate(arr.begin(), arr.end(), 0);
-            // std::cout << "SUM from checksum: " << sum << "\n";
-            return sum;
-        }
-
-    private:
-        int sum = 0;
-        int current = 0;
+    }
+    void consume(T & data)
+    {
+        int sum = check_sum(data);
+        std::cout << "(CONSUME)Sum of elements of an array is: " << sum << "\n";
+        std::sort(data.begin(), data.end());
+        ++sorted_arrays;
+        // std::lock_guard<std::mutex> lock(mutex_final);
+        ++sorted_num;
+    }
+    int check_sum(std::array<int, g_array_size> & arr)
+    {
+        int sum = std::accumulate(arr.begin(), arr.end(), 0);
+        return sum;
+    }
 };
 
+class thread_guard
+{
+    std::thread& t;
+public:
+    explicit thread_guard(std::thread& t_): t(t_){}
+    ~thread_guard()
+    {
+        if(t.joinable())
+        {
+            t.join();
+        }
+    }
+    thread_guard(thread_guard const&)=delete;
+    thread_guard& operator=(thread_guard const&)=delete;
+};
 int main()
 {
-    FixedQueue< std::array<int, g_array_size> > fque(3);
-    // Producer prod(fque);
+    auto t_start = Clock::now();
     int t_num = 10;
-    // std::array<int, g_array_size> ar1;
-    // std::array<int, g_array_size> ar2;
-    // std::array<int, g_array_size> ar3;
-    // std::array<int, g_array_size> ar4;
+    FixedQueue< std::array<int, g_array_size> > fque(100);
 
-    fque.getMaxSize();
-    // fque.push(ar1);
-    // fque.push(ar2);
-    std::cout << fque.size() << "\n";
-    Producer< std::array<int, g_array_size> > prod(fque, 10);
-    std::thread producer_t(&Producer< std::array<int, g_array_size> >::run, prod);
-    // producer_t.join();
-    // Consumer< std::array<int, g_array_size> > cons(fque);
-    // cons.run();
-    // Consumer< std::array<int, g_array_size> > cons_2(fque);
-    // cons_2.run();
-
-    // Consumer< std::array<int, g_array_size> > cons(fque);
-    // std::thread t1(&Consumer< std::array<int, g_array_size> >::run, cons);
-    // t1.join();
+    Producer< std::array<int, g_array_size> > prod(std::ref(fque), arrays_to_produce);
+    std::thread producer_t(&Producer< std::array<int, g_array_size> >::run, &prod);
+    thread_guard prod_g(producer_t);
 
     std::vector<std::thread> t_vector;
     t_vector.reserve(t_num);
     for (int i = 0; i < t_num; i++)
     {
-        Consumer< std::array<int, g_array_size> > cons(fque);
+        Consumer< std::array<int, g_array_size> > cons(std::ref(fque));
         t_vector.emplace_back(std::thread(&Consumer< std::array<int, g_array_size> >::run, cons));
     }
     for (auto& thread : t_vector)
-        thread.join();
-    producer_t.join();
-    // Consumer cons(fque, "1");
-    // Consumer cons_2(fque, "2");
-    // Consumer cons_3(fque, "3");
-    std::cout << "Consumer has sorted (atomic) " << g_sorted << " num of arrays\n";
-    // fque.push(ar4);
-    // fque.pop();
-    // fque.pop();
-    // std::cout <<  fque.size() << "\n";
-    // fque.push(ar3);
-    // std::cout <<  fque.size() << "\n";
+        thread_guard cons_g(thread);
+    auto t_stop = Clock::now();
+    typedef std::chrono::duration<float, std::milli> milli_seconds;
+    std::cout << "Elapsed time:\t " << std::chrono::duration_cast<milli_seconds>(t_stop - t_start).count() << "ms\n";
 
     return 0;
 }
